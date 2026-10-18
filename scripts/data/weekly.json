@@ -1,0 +1,23 @@
+{
+  "weekly": [
+    {
+      "date": "2026-10-19",
+      "title": "AI 工具免费额度情报 · 第 1 期",
+      "summary": "本周情报中心实测+整理：8 个真免费额度入口，含注册即送、免卡白嫖、国内直连三类。",
+      "items": [
+        { "name": "智谱 BigModel", "offer": "新用户注册送 2500 万 tokens；GLM-4.5-Flash 输入输出缓存全免费", "type": "国内直连", "status": "调研核实", "link": "https://bigmodel.cn" },
+        { "name": "Groq", "offer": "免绑卡、免手机号注册即送；每天数亿 token 免费额度，Llama/Qwen 全系", "type": "免卡白嫖", "status": "调研核实", "link": "https://console.groq.com" },
+        { "name": "Hugging Face Spaces", "offer": "免费 2 核 CPU/16G 内存/50G 硬盘；ZeroGPU 免费共享 GPU 跑模型", "type": "免卡白嫖", "status": "调研核实", "link": "https://huggingface.co" },
+        { "name": "River AI", "offer": "注册送 $25；OpenAI 兼容接口，DeepSeek-V4.1-Flash / GLM-5.3-Flash 可用", "type": "注册即送", "status": "✅ 已领，实测调用成功", "link": "https://river.ai" },
+        { "name": "get.tech 域名", "offer": "MLH Hacktoberfest 优惠码送 1 年免费 .tech 域名（原价 $12.99）", "type": "注册即送", "status": "✅ 已领到 wooltools.tech", "link": "https://get.tech" },
+        { "name": "NVIDIA NIM", "offer": "免费云端大模型额度（双 key 轮询绕单 key 限流）", "type": "注册即送", "status": "✅ 本站在用", "link": "https://build.nvidia.com" },
+        { "name": "硅基流动 SiliconFlow", "offer": "新用户 2000 万 tokens，开源模型全家桶", "type": "国内直连", "status": "调研核实", "link": "https://siliconflow.cn" },
+        { "name": "Firecrawl", "offer": "GitHub OAuth 注册，1000 credits/月免费抓取额度", "type": "免卡白嫖", "status": "✅ 本站在用", "link": "https://firecrawl.dev" }
+      ]
+    }
+  ],
+  "deals": [
+    { "date": "2026-10-18", "item": "wooltools.tech 域名 1 年免费（MLH 活动）", "status": "✅ 已薅到" },
+    { "date": "2026-10-14", "item": "River AI $25 注册赠额", "status": "✅ 已薅到" }
+  ]
+}
