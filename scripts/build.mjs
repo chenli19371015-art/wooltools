@@ -247,7 +247,7 @@ function buildGuide() {
 <p class="sec-desc">641 条循证建议，支持按成本/证据等级/性价比筛选和全文搜索。数据来自 <a href="https://github.com/eternity4719/HowToLiveBetter" target="_blank" rel="noopener">eternity4719/HowToLiveBetter</a>（CC BY 4.0），本站镜像再加工。</p>
 <iframe src="/HowToLiveBetter.html" style="width:100%;height:78vh;border:1px solid var(--line);border-radius:12px;background:#fff" title="高性价比人生指南完整检索版"></iframe>
 </section>`;
-  writePage('guide.html', { title: '完整指南 641 条 — 羊毛工具箱', desc: '高性价比人生指南完整检索版：641 条循证建议，按成本/证据等级筛选。', body, path: '/guide/' });
+  writePage(join('guide', 'index.html'), { title: '完整指南 641 条 — 羊毛工具箱', desc: '高性价比人生指南完整检索版：641 条循证建议，按成本/证据等级筛选。', body, path: '/guide/' });
 }
 
 function buildAbout() {
@@ -261,7 +261,7 @@ function buildAbout() {
 <p style="margin-top:10px">额度情报由自动化情报系统每日采集、每周整理，状态栏标 ✅ 的是实测领到的。</p>
 <p style="margin-top:10px">本站内容不构成医疗、法律、投资建议。政策金额以你所在地当年官方公布为准。</p>
 </section>`;
-  writePage('about.html', { title: '关于 — 羊毛工具箱', desc: '羊毛工具箱是什么：高性价比生活决策 + AI 工具免费额度情报。', body, path: '/about/' });
+  writePage(join('about', 'index.html'), { title: '关于 — 羊毛工具箱', desc: '羊毛工具箱是什么：高性价比生活决策 + AI 工具免费额度情报。', body, path: '/about/' });
 }
 
 function writePage(relPath, { title, desc, body, path }) {
