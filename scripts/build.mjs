@@ -2,8 +2,16 @@
 /**
  * 羊毛工具箱 wooltools.tech 静态生成器（零第三方依赖）
  * 用法: node scripts/build.mjs
- * 输入: book/*.md（HowToLiveBetter 641 条）+ scripts/data/*.json
+ * 输入: book/*.md（641 条）+ scripts/data/*.json
  * 输出: dist/（纯静态，GitHub Pages 直接托管）
+ *
+ * 页面结构（2026-10-20 扩展，为 SEO 长尾铺量）：
+ *   /                    首页
+ *   /all/                全部目录（641 条按章分组）
+ *   /ch/<章号>/          34 个章节页
+ *   /p/<章号>-<条号>/     641 个条目页（每条一个搜索意图）
+ *   /slice/<slug>/       8 个场景切片
+ *   /weekly/ /guide/ /about/
  */
 import { readFileSync, writeFileSync, readdirSync, mkdirSync, existsSync, copyFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
@@ -14,55 +22,20 @@ const ROOT = join(__dirname, '..');
 const BOOK_DIR = join(ROOT, 'book');
 const DIST = join(ROOT, 'dist');
 const SITE = 'https://wooltools.tech';
+const TODAY = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
 
 /* ---------- 工具 ---------- */
 const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 const linkify = (s) => esc(s).replace(/&lt;(https?:\/\/[^\s&]+)&gt;/g, '<a href="$1" target="_blank" rel="noopener">$1</a>');
+const clip = (s, n) => {
+  const t = String(s ?? '').replace(/\s+/g, ' ').trim();
+  return t.length > n ? t.slice(0, n) + '…' : t;
+};
+const chapterUrl = (num) => `/ch/${num}/`;
+const entryUrl = (num, idx) => `/p/${num}-${idx}/`;
 
-/* ---------- 1. 解析 book/*.md ---------- */
-function parseBook() {
-  const entries = [];
-  const files = readdirSync(BOOK_DIR).filter((f) => f.endsWith('.md')).sort();
-  for (const file of files) {
-    const text = readFileSync(join(BOOK_DIR, file), 'utf8');
-    const chapterTitle = (text.match(/^#\s*\d+\.\s*(.+)$/m) || [, file.replace(/\.md$/, '')])[1].trim();
-    const blocks = text.split(/^###\s+/m).slice(1);
-    for (const b of blocks) {
-      const m = b.match(/^(\d+)\.\s*(.+)$/m);
-      if (!m) continue;
-      const get = (label) => {
-        const r = b.match(new RegExp(`^-\\s*${label}：(.+)$`, 'm'));
-        return r ? r[1].trim() : '';
-      };
-      entries.push({
-        chapter: file,
-        chapterTitle,
-        index: parseInt(m[1], 10),
-        title: m[2].trim(),
-        cost: get('成本'),
-        plain: get('说人话'),
-        benefit: get('收益'),
-        grade: get('证据等级') || 'C',
-        source: get('来源'),
-        note: get('备注'),
-      });
-    }
-  }
-  return entries;
-}
-
-/* ---------- 2. 布局 ---------- */
-function layout({ title, desc, body, path = '/' }) {
-  return `<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>${esc(title)}</title>
-<meta name="description" content="${esc(desc)}">
-<link rel="canonical" href="${SITE}${path}">
-<style>
-:root{--bg:#faf9f7;--card:#fff;--ink:#2b2b28;--sub:#6b6b66;--line:#e8e4dc;--accent:#b3541e;--accent-bg:#fdf3ec;--green:#18794e;--green-bg:#eef7f1;--amber:#915930;--amber-bg:#fbf3e8;--red:#a33b2e;--red-bg:#fbeeec}
+/* ---------- 样式（外置，全部页面共用一份） ---------- */
+const SITE_CSS = `:root{--bg:#faf9f7;--card:#fff;--ink:#2b2b28;--sub:#6b6b66;--line:#e8e4dc;--accent:#b3541e;--accent-bg:#fdf3ec;--green:#18794e;--green-bg:#eef7f1;--amber:#915930;--amber-bg:#fbf3e8;--red:#a33b2e;--red-bg:#fbeeec}
 *{margin:0;padding:0;box-sizing:border-box}
 body{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;background:var(--bg);color:var(--ink);line-height:1.75;font-size:16px}
 a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
@@ -111,14 +84,98 @@ footer.site{border-top:1px solid var(--line);margin-top:40px;padding:26px 0 40px
 footer.site p{margin-bottom:6px}
 .crumb{font-size:13px;color:var(--sub);margin:18px 0 6px}
 .crumb a{color:var(--sub)}
-@media(max-width:560px){.hero h1{font-size:24px}.entry{padding:16px}}
-</style>
+/* 条目页 / 章节页 */
+.article{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:26px 28px;margin:8px 0 22px}
+.article h1{font-size:24px;line-height:1.45;margin-bottom:14px}
+.article h1 .no{color:var(--sub);font-weight:400;margin-right:8px;font-size:19px}
+.article .plain{background:var(--accent-bg);border-left:3px solid var(--accent);padding:12px 16px;border-radius:0 8px 8px 0;font-size:15px;margin:14px 0 18px}
+.article .plain b{color:var(--accent)}
+.article .blk{margin-top:18px}
+.article .blk h2{font-size:14px;color:var(--sub);font-weight:600;letter-spacing:.02em;margin-bottom:6px}
+.article .blk p{font-size:15px}
+.article .blk .src{font-size:12.5px;color:var(--sub);word-break:break-all;line-height:1.85}
+.article .note{font-size:13.5px;color:var(--amber);background:var(--amber-bg);padding:10px 14px;border-radius:8px;margin-top:18px}
+.pager{display:flex;justify-content:space-between;gap:14px;font-size:14px;margin:6px 0 26px;flex-wrap:wrap}
+.pager a{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 16px;color:var(--ink)}
+.pager a:hover{border-color:var(--accent);text-decoration:none}
+.pager .sp{flex:1}
+.rel{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px 20px;margin-bottom:18px}
+.rel h2{font-size:15px;margin-bottom:12px}
+.rel ul{list-style:none;display:flex;flex-direction:column;gap:9px}
+.rel li{font-size:14.5px;line-height:1.55;padding-left:14px;position:relative}
+.rel li:before{content:"";position:absolute;left:0;top:.72em;width:5px;height:5px;border-radius:50%;background:var(--accent)}
+.rel li a{color:var(--ink)}
+.rel li a:hover{color:var(--accent)}
+.toc{list-style:none;display:flex;flex-direction:column;gap:7px;font-size:14.5px}
+.toc li{line-height:1.55}
+.toc .cn{color:var(--sub);font-size:12.5px;margin-left:6px}
+.chapblk{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px 20px;margin-bottom:14px}
+.chapblk h3{font-size:16px;margin-bottom:10px}
+.chapblk h3 a{color:var(--ink)}
+@media(max-width:560px){.hero h1{font-size:24px}.entry{padding:16px}.article{padding:20px 18px}.article h1{font-size:20px}}`;
+
+/* ---------- 1. 解析 book/*.md ---------- */
+function parseBook() {
+  const entries = [];
+  const chapters = [];
+  const files = readdirSync(BOOK_DIR).filter((f) => f.endsWith('.md')).sort();
+  for (const file of files) {
+    const text = readFileSync(join(BOOK_DIR, file), 'utf8');
+    const headMatch = text.match(/^#\s*(\d+)\.\s*(.+)$/m);
+    const chapterNum = headMatch ? parseInt(headMatch[1], 10) : parseInt((file.match(/^(\d+)/) || [, '0'])[1], 10);
+    const chapterTitle = headMatch ? headMatch[2].trim() : file.replace(/\.md$/, '');
+    const introMatch = text.match(/^#\s*\d+\.\s*.+\r?\n([\s\S]*?)(?=^###)/m);
+    const chapterIntro = introMatch ? introMatch[1].trim().split(/\r?\n\s*\r?\n/)[0].trim() : '';
+    const blocks = text.split(/^###\s+/m).slice(1);
+    for (const b of blocks) {
+      const m = b.match(/^(\d+)\.\s*(.+)$/m);
+      if (!m) continue;
+      const get = (label) => {
+        const r = b.match(new RegExp(`^-\\s*${label}：(.+)$`, 'm'));
+        return r ? r[1].trim() : '';
+      };
+      entries.push({
+        chapter: file,
+        chapterNum,
+        chapterTitle,
+        chapterIntro,
+        index: parseInt(m[1], 10),
+        title: m[2].trim(),
+        cost: get('成本'),
+        plain: get('说人话'),
+        benefit: get('收益'),
+        grade: get('证据等级') || 'C',
+        source: get('来源'),
+        note: get('备注'),
+      });
+    }
+    if (!chapters.find((c) => c.num === chapterNum)) {
+      chapters.push({ num: chapterNum, title: chapterTitle, intro: chapterIntro, file });
+    }
+  }
+  chapters.sort((a, b) => a.num - b.num);
+  return { entries, chapters };
+}
+
+/* ---------- 2. 布局 ---------- */
+function layout({ title, desc, body, path = '/', jsonld = '', robots = 'index,follow' }) {
+  return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>${esc(title)}</title>
+<meta name="description" content="${esc(desc)}">
+<meta name="robots" content="${robots}">
+<link rel="canonical" href="${SITE}${path}">
+<link rel="stylesheet" href="/assets/site.css">
+${jsonld ? `<script type="application/ld+json">${jsonld}</script>` : ''}
 </head>
 <body>
 <header class="site"><div class="wrap">
 <a class="logo" href="/">🧰 羊毛工具箱 <span>wooltools.tech</span><small>WOOL TOOLS · 高性价比生活决策 + AI 工具免费额度情报</small></a>
 <nav class="top">
-<a href="/">首页</a><a href="/slice/shiye/">失业保障</a><a href="/slice/shengqian/">省钱</a><a href="/slice/chengxuyuan/">程序员红线</a><a href="/weekly/">额度情报</a><a href="/guide/">完整指南</a><a href="/about/">关于</a>
+<a href="/">首页</a><a href="/all/">全部目录</a><a href="/slice/shiye/">失业保障</a><a href="/slice/shengqian/">省钱</a><a href="/slice/chengxuyuan/">程序员红线</a><a href="/weekly/">额度情报</a><a href="/guide/">完整指南</a><a href="/about/">关于</a>
 </nav>
 </div></header>
 <main class="wrap">
@@ -135,8 +192,8 @@ ${body}
 /* ---------- 3. 条目渲染 ---------- */
 function renderEntry(e, no) {
   const g = e.grade === 'A' ? 'a' : e.grade === 'B' ? 'b' : 'c';
-  return `<article class="entry" id="e-${e.chapter.replace(/\.md$/, '')}-${e.index}">
-<h3><span class="no">${no}.</span>${esc(e.title)}<span class="badge ${g}">证据 ${e.grade}</span></h3>
+  return `<article class="entry" id="e-${e.chapterNum}-${e.index}">
+<h3><span class="no">${no}.</span><a href="${entryUrl(e.chapterNum, e.index)}" style="color:inherit">${esc(e.title)}</a><span class="badge ${g}">证据 ${e.grade}</span></h3>
 ${e.plain ? `<div class="plain">${esc(e.plain)}</div>` : ''}
 <dl>
 ${e.cost ? `<dt>成本</dt><dd>${esc(e.cost)}</dd>` : ''}
@@ -147,8 +204,8 @@ ${e.note ? `<div class="note">备注：${esc(e.note)}</div>` : ''}
 </article>`;
 }
 
-/* ---------- 4. 页面 ---------- */
-function buildIndex(entries, slices, weekly) {
+/* ---------- 4. 首页 ---------- */
+function buildIndex(entries, slices, weekly, chapters) {
   const wk = weekly.weekly[0];
   const body = `
 <div class="hero">
@@ -166,6 +223,15 @@ ${slices.map((s) => {
   return `<a class="card" href="/slice/${s.slug}/"><h3>${esc(s.nav)}</h3><p>${esc(s.desc.slice(0, 52))}…</p><div class="meta">${n} 条 · 证据分级标注</div></a>`;
 }).join('\n')}
 </div>
+</section>
+
+<section>
+<h2 class="sec">📚 全部 34 个主题</h2>
+<p class="sec-desc">${entries.length} 条建议按主题分章，点进任何一条都能看到成本、收益和官方文件出处。</p>
+<div class="grid">
+${chapters.map((c) => `<a class="card" href="${chapterUrl(c.num)}"><h3>${c.num}. ${esc(c.title)}</h3><div class="meta">${entries.filter((e) => e.chapterNum === c.num).length} 条</div></a>`).join('\n')}
+</div>
+<p class="sec-desc" style="margin-top:14px"><a href="/all/">查看全部 ${entries.length} 条完整目录 →</a></p>
 </section>
 
 <section>
@@ -196,6 +262,7 @@ function countSlice(entries, slice) {
   return n;
 }
 
+/* ---------- 5. 场景切片 ---------- */
 function buildSlices(entries, slices) {
   for (const s of slices) {
     const picked = [];
@@ -214,13 +281,150 @@ function buildSlices(entries, slices) {
 <h2 class="sec">${esc(s.h1)}</h2>
 <p class="sec-desc">${esc(s.desc)}</p>
 ${picked.map((e, i) => renderEntry(e, i + 1)).join('\n')}
-<p class="sec-desc" style="margin-top:20px">数据来源：<a href="https://github.com/eternity4719/HowToLiveBetter" target="_blank" rel="noopener">HowToLiveBetter</a>（CC BY 4.0）。完整 641 条见 <a href="/guide/">完整指南</a>。</p>
+<p class="sec-desc" style="margin-top:20px">数据来源：<a href="https://github.com/eternity4719/HowToLiveBetter" target="_blank" rel="noopener">HowToLiveBetter</a>（CC BY 4.0）。完整 641 条见 <a href="/guide/">完整指南</a> 或 <a href="/all/">全部目录</a>。</p>
 </section>`;
     mkdirSync(join(DIST, 'slice', s.slug), { recursive: true });
     writePage(join('slice', s.slug, 'index.html'), { title: `${s.nav} — 羊毛工具箱`, desc: s.desc, body, path: `/slice/${s.slug}/` });
   }
 }
 
+/* ---------- 6. 章节页（34 个） ---------- */
+function buildChapters(entries, chapters, sliceMap) {
+  chapters.forEach((c, ci) => {
+    const list = entries.filter((e) => e.chapterNum === c.num).sort((a, b) => a.index - b.index);
+    const prev = chapters[ci - 1];
+    const next = chapters[ci + 1];
+    const desc = c.intro ? clip(c.intro, 118) : `第 ${c.num} 章：${c.title}，共 ${list.length} 条，每条写明成本、收益、证据等级与官方文件出处。`;
+    const body = `
+<div class="crumb"><a href="/">首页</a> / <a href="/all/">全部目录</a> / ${esc(c.title)}</div>
+<section style="padding-top:8px">
+<h2 class="sec">${c.num}. ${esc(c.title)}</h2>
+<p class="sec-desc">${esc(c.intro || desc)}</p>
+<p class="sec-desc">本章共 <strong>${list.length}</strong> 条。证据等级 A 表示有官方文件或权威统计支撑，B 表示有部分依据，C 表示经验性建议。点开任意一条可以看到完整依据。</p>
+${list.map((e, i) => renderEntry(e, i + 1)).join('\n')}
+</section>
+<div class="pager">
+${prev ? `<a href="${chapterUrl(prev.num)}">← ${prev.num}. ${esc(prev.title)}</a>` : '<span class="sp"></span>'}
+${next ? `<a href="${chapterUrl(next.num)}">${next.num}. ${esc(next.title)} →</a>` : '<span class="sp"></span>'}
+</div>`;
+    writePage(join('ch', String(c.num), 'index.html'), {
+      title: `${c.num}. ${c.title}（${list.length} 条）— 羊毛工具箱`,
+      desc,
+      body,
+      path: chapterUrl(c.num),
+      jsonld: JSON.stringify({
+        '@context': 'https://schema.org',
+        '@type': 'CollectionPage',
+        name: `${c.num}. ${c.title}`,
+        description: desc,
+        url: `${SITE}${chapterUrl(c.num)}`,
+        isPartOf: { '@type': 'WebSite', name: '羊毛工具箱', url: SITE + '/' },
+        inLanguage: 'zh-CN',
+      }),
+    });
+  });
+}
+
+/* ---------- 7. 条目页（641 个） ---------- */
+function buildEntries(entries, slices, chapterMap, sliceMap) {
+  // 按章节分组，用于"同主题其他条目"
+  const byChapter = new Map();
+  for (const e of entries) {
+    if (!byChapter.has(e.chapterNum)) byChapter.set(e.chapterNum, []);
+    byChapter.get(e.chapterNum).push(e);
+  }
+  for (const list of byChapter.values()) list.sort((a, b) => a.index - b.index);
+
+  for (const e of entries) {
+    const g = e.grade === 'A' ? 'a' : e.grade === 'B' ? 'b' : 'c';
+    const chap = chapterMap.get(e.chapterNum) || { num: e.chapterNum, title: e.chapterTitle };
+    const siblings = byChapter.get(e.chapterNum).filter((x) => x.index !== e.index);
+    // 相关条目：优先同章节相邻，最多 8 条
+    const near = siblings
+      .slice()
+      .sort((a, b) => Math.abs(a.index - e.index) - Math.abs(b.index - e.index))
+      .slice(0, 8)
+      .sort((a, b) => a.index - b.index);
+    const relSlices = sliceMap.get(`e:${e.chapterNum}-${e.index}`) || [];
+    const all = byChapter.get(e.chapterNum);
+    const pos = all.findIndex((x) => x.index === e.index);
+    const prevE = all[pos - 1];
+    const nextE = all[pos + 1];
+
+    const desc = clip(e.plain || e.cost || e.title, 118);
+    const body = `
+<div class="crumb"><a href="/">首页</a> / <a href="/all/">全部目录</a> / <a href="${chapterUrl(chap.num)}">${esc(chap.title)}</a> / 第 ${e.index} 条</div>
+<article class="article">
+<h1><span class="no">${e.index}.</span>${esc(e.title)}<span class="badge ${g}">证据 ${e.grade}</span></h1>
+${e.plain ? `<div class="plain"><b>说人话：</b>${esc(e.plain)}</div>` : ''}
+${e.cost ? `<div class="blk"><h2>成本</h2><p>${esc(e.cost)}</p></div>` : ''}
+${e.benefit ? `<div class="blk"><h2>收益 / 怎么做</h2><p>${esc(e.benefit)}</p></div>` : ''}
+${e.source ? `<div class="blk"><h2>官方来源</h2><p class="src">${linkify(e.source)}</p></div>` : ''}
+${e.note ? `<div class="note"><strong>备注：</strong>${esc(e.note)}</div>` : ''}
+</article>
+<div class="pager">
+${prevE ? `<a href="${entryUrl(prevE.chapterNum, prevE.index)}">← 上一条</a>` : '<span class="sp"></span>'}
+${nextE ? `<a href="${entryUrl(nextE.chapterNum, nextE.index)}">下一条 →</a>` : '<span class="sp"></span>'}
+</div>
+${relSlices.length ? `<div class="rel"><h2>这条属于这些场景</h2><ul>${relSlices.map((s) => `<li><a href="/slice/${s.slug}/">${esc(s.nav)}</a></li>`).join('')}</ul></div>` : ''}
+${near.length ? `<div class="rel"><h2>${esc(chap.title)} · 其他条目</h2><ul>${near.map((x) => `<li><a href="${entryUrl(x.chapterNum, x.index)}">${esc(x.title)}</a></li>`).join('')}</ul></div>` : ''}
+<div class="rel"><h2>出处与说明</h2><ul><li>数据来自开源项目 <a href="https://github.com/eternity4719/HowToLiveBetter" target="_blank" rel="noopener">HowToLiveBetter</a>（CC BY 4.0），本站按原许可署名转载并再加工。</li><li>本站内容不构成医疗、法律、投资建议；政策金额、门槛以你所在地当年官方公布为准。</li></ul></div>`;
+
+    writePage(join('p', `${e.chapterNum}-${e.index}`, 'index.html'), {
+      title: `${e.title} — 羊毛工具箱`,
+      desc,
+      body,
+      path: entryUrl(e.chapterNum, e.index),
+      jsonld: JSON.stringify({
+        '@context': 'https://schema.org',
+        '@type': 'Article',
+        headline: e.title,
+        description: desc,
+        url: `${SITE}${entryUrl(e.chapterNum, e.index)}`,
+        inLanguage: 'zh-CN',
+        isPartOf: { '@type': 'WebSite', name: '羊毛工具箱', url: SITE + '/' },
+        about: chap.title,
+        citation: (e.source || '').split(/；/).slice(0, 3).join(' ').slice(0, 500),
+        publisher: { '@type': 'Organization', name: '羊毛工具箱', url: SITE + '/' },
+        breadcrumb: {
+          '@type': 'BreadcrumbList',
+          itemListElement: [
+            { '@type': 'ListItem', position: 1, name: '首页', item: SITE + '/' },
+            { '@type': 'ListItem', position: 2, name: chap.title, item: `${SITE}${chapterUrl(chap.num)}` },
+            { '@type': 'ListItem', position: 3, name: e.title },
+          ],
+        },
+      }),
+    });
+  }
+}
+
+/* ---------- 8. 全部目录 ---------- */
+function buildAllIndex(entries, chapters) {
+  const body = `
+<div class="crumb"><a href="/">首页</a> / 全部目录</div>
+<section style="padding-top:8px">
+<h2 class="sec">📚 全部 ${entries.length} 条 · 按主题分 ${chapters.length} 章</h2>
+<p class="sec-desc">每一条都可以单独打开，里面写了成本、收益、证据等级和官方文件出处。</p>
+${chapters.map((c) => {
+  const list = entries.filter((e) => e.chapterNum === c.num).sort((a, b) => a.index - b.index);
+  return `<div class="chapblk">
+<h3><a href="${chapterUrl(c.num)}">${c.num}. ${esc(c.title)}</a><span class="cn">${list.length} 条</span></h3>
+<ul class="toc">
+${list.map((e) => `<li><a href="${entryUrl(e.chapterNum, e.index)}">${e.index}. ${esc(e.title)}</a></li>`).join('\n')}
+</ul>
+</div>`;
+}).join('\n')}
+</section>`;
+  writePage(join('all', 'index.html'), {
+    title: `全部目录 · ${entries.length} 条生活决策 — 羊毛工具箱`,
+    desc: `${entries.length} 条循证生活决策完整目录，按 ${chapters.length} 个主题分章：失业保障、省钱、租房、维权、职业病、法律红线、程序员、创业、育儿、养老等。每条写明成本、收益、证据等级和官方出处。`,
+    body,
+    path: '/all/',
+  });
+}
+
+/* ---------- 9. 周报 / 指南 / 关于 ---------- */
 function buildWeekly(weekly) {
   const body = `
 <div class="crumb"><a href="/">首页</a> / 额度情报周报</div>
@@ -264,35 +468,82 @@ function buildAbout() {
   writePage(join('about', 'index.html'), { title: '关于 — 羊毛工具箱', desc: '羊毛工具箱是什么：高性价比生活决策 + AI 工具免费额度情报。', body, path: '/about/' });
 }
 
-function writePage(relPath, { title, desc, body, path }) {
-  const html = layout({ title, desc, body, path });
+function writePage(relPath, { title, desc, body, path, jsonld = '', robots = 'index,follow' }) {
+  const html = layout({ title, desc, body, path, jsonld, robots });
   const full = join(DIST, relPath);
   mkdirSync(dirname(full), { recursive: true });
   writeFileSync(full, html, 'utf8');
 }
 
-/* ---------- 5. SEO ---------- */
-function buildSeo(slices) {
-  const urls = ['/', '/weekly/', '/guide/', '/about/', ...slices.map((s) => `/slice/${s.slug}/`)];
+/* ---------- 10. SEO ---------- */
+function buildSeo(entries, chapters, slices) {
+  const urls = [
+    '/',
+    '/all/',
+    '/weekly/',
+    '/guide/',
+    '/about/',
+    ...chapters.map((c) => chapterUrl(c.num)),
+    ...slices.map((s) => `/slice/${s.slug}/`),
+    ...entries.map((e) => entryUrl(e.chapterNum, e.index)),
+  ];
   writeFileSync(join(DIST, 'sitemap.xml'), `<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-${urls.map((u) => `<url><loc>${SITE}${u}</loc><changefreq>weekly</changefreq></url>`).join('\n')}
+${urls.map((u) => `<url><loc>${SITE}${u}</loc><lastmod>${TODAY}</lastmod><changefreq>${u === '/' || u === '/weekly/' ? 'daily' : 'monthly'}</changefreq></url>`).join('\n')}
 </urlset>`, 'utf8');
   writeFileSync(join(DIST, 'robots.txt'), `User-agent: *\nAllow: /\nSitemap: ${SITE}/sitemap.xml\n`, 'utf8');
+  return urls.length;
 }
 
 /* ---------- main ---------- */
-const entries = parseBook();
+const { entries, chapters } = parseBook();
 const slices = JSON.parse(readFileSync(join(__dirname, 'data', 'slices.json'), 'utf8')).slices;
 const weekly = JSON.parse(readFileSync(join(__dirname, 'data', 'weekly.json'), 'utf8'));
 
-console.log(`解析条目: ${entries.length} 条 / ${new Set(entries.map((e) => e.chapter)).size} 章`);
-buildIndex(entries, slices, weekly);
+const chapterMap = new Map(chapters.map((c) => [c.num, c]));
+
+// 建立 条目 → 场景切片 反查表
+const sliceMap = new Map();
+for (const s of slices) {
+  for (const ref of s.refs) {
+    const list = entries.filter((e) => e.chapter === ref.chapter);
+    const picked = ref.indexes && ref.indexes.length ? list.filter((e) => ref.indexes.includes(e.index)) : list;
+    for (const e of picked) {
+      const k = `e:${e.chapterNum}-${e.index}`;
+      if (!sliceMap.has(k)) sliceMap.set(k, []);
+      sliceMap.get(k).push({ slug: s.slug, nav: s.nav });
+    }
+  }
+}
+
+console.log(`解析条目: ${entries.length} 条 / ${chapters.length} 章 / ${slices.length} 个场景切片`);
+buildIndex(entries, slices, weekly, chapters);
 buildSlices(entries, slices);
+buildChapters(entries, chapters, sliceMap);
+buildEntries(entries, slices, chapterMap, sliceMap);
+buildAllIndex(entries, chapters);
 buildWeekly(weekly);
 buildGuide();
 buildAbout();
-buildSeo(slices);
+const n = buildSeo(entries, chapters, slices);
+
+// 资产
+mkdirSync(join(DIST, 'assets'), { recursive: true });
+writeFileSync(join(DIST, 'assets', 'site.css'), SITE_CSS, 'utf8');
+
+// IndexNow / 百度站长 校验文件（必须能被公开访问，搜索引擎靠它认领站点）
+if (existsSync(join(__dirname, 'data', 'seo.json'))) {
+  const seo = JSON.parse(readFileSync(join(__dirname, 'data', 'seo.json'), 'utf8'));
+  if (seo.indexnowKey) {
+    writeFileSync(join(DIST, `${seo.indexnowKey}.txt`), seo.indexnowKey, 'utf8');
+    console.log(`IndexNow 密钥文件 → /${seo.indexnowKey}.txt`);
+  }
+  if (seo.baiduVerifyFile && seo.baiduVerifyBody) {
+    writeFileSync(join(DIST, seo.baiduVerifyFile), seo.baiduVerifyBody, 'utf8');
+    console.log(`百度校验文件 → /${seo.baiduVerifyFile}`);
+  }
+}
+
 // public/（iframe 完整版）拷入 dist
 if (existsSync(join(ROOT, 'public'))) {
   for (const f of readdirSync(join(ROOT, 'public'))) {
@@ -302,4 +553,5 @@ if (existsSync(join(ROOT, 'public'))) {
 }
 // GitHub Pages 自定义域名
 writeFileSync(join(DIST, 'CNAME'), 'wooltools.tech\n', 'utf8');
+console.log(`sitemap 收录 ${n} 个 URL`);
 console.log(`生成完成 → ${DIST}`);
