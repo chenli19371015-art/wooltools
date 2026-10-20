@@ -2,16 +2,11 @@
 /**
  * 羊毛工具箱 wooltools.tech 静态生成器（零第三方依赖）
  * 用法: node scripts/build.mjs
- * 输入: book/*.md（641 条）+ scripts/data/*.json
+ * 输入: book/*.md（HowToLiveBetter 641 条）+ scripts/data/*.json
  * 输出: dist/（纯静态，GitHub Pages 直接托管）
  *
- * 页面结构（2026-10-20 扩展，为 SEO 长尾铺量）：
- *   /                    首页
- *   /all/                全部目录（641 条按章分组）
- *   /ch/<章号>/          34 个章节页
- *   /p/<章号>-<条号>/     641 个条目页（每条一个搜索意图）
- *   /slice/<slug>/       8 个场景切片
- *   /weekly/ /guide/ /about/
+ * 2026-10-19 重构：首页改为工具导向（/vps/ /domains/ /ai-free/ 三张对比表），
+ * book/ 内容保留但从首页降权为二级入口。推荐链接统一在 scripts/data/refs.json 配置。
  */
 import { readFileSync, writeFileSync, readdirSync, mkdirSync, existsSync, copyFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
@@ -22,20 +17,73 @@ const ROOT = join(__dirname, '..');
 const BOOK_DIR = join(ROOT, 'book');
 const DIST = join(ROOT, 'dist');
 const SITE = 'https://wooltools.tech';
-const TODAY = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
 
 /* ---------- 工具 ---------- */
 const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 const linkify = (s) => esc(s).replace(/&lt;(https?:\/\/[^\s&]+)&gt;/g, '<a href="$1" target="_blank" rel="noopener">$1</a>');
-const clip = (s, n) => {
-  const t = String(s ?? '').replace(/\s+/g, ' ').trim();
-  return t.length > n ? t.slice(0, n) + '…' : t;
-};
-const chapterUrl = (num) => `/ch/${num}/`;
-const entryUrl = (num, idx) => `/p/${num}-${idx}/`;
 
-/* ---------- 样式（外置，全部页面共用一份） ---------- */
-const SITE_CSS = `:root{--bg:#faf9f7;--card:#fff;--ink:#2b2b28;--sub:#6b6b66;--line:#e8e4dc;--accent:#b3541e;--accent-bg:#fdf3ec;--green:#18794e;--green-bg:#eef7f1;--amber:#915930;--amber-bg:#fbf3e8;--red:#a33b2e;--red-bg:#fbeeec}
+/* ---------- 推荐链接（占位符，未填真实 ID 前生成示例格式链接） ---------- */
+const refs = JSON.parse(readFileSync(join(__dirname, 'data', 'refs.json'), 'utf8'));
+const REF_BUILDER = {
+  vultr: (id) => `https://www.vultr.com/?ref=${id}`,
+  namesilo: (id) => `https://www.namesilo.com/?rid=${id}`,
+  namecheap: (id) => `https://www.namecheap.com/?aff=${id}`,
+  bandwagonhost: (id) => `https://bandwagonhost.com/aff.php?aff=${id}`,
+};
+/** 返回某商家的注册链接：有 ref_key 则用 refs.json 的 ID 拼推荐链接，否则返回官网直链 */
+function regLink(p) {
+  if (p.ref_key && REF_BUILDER[p.ref_key]) {
+    const id = refs[p.ref_key] || 'YOUR_REF_ID';
+    return REF_BUILDER[p.ref_key](id);
+  }
+  return p.site;
+}
+const isPlaceholder = (key) => !refs[key] || String(refs[key]).startsWith('YOUR_');
+
+/* ---------- 1. 解析 book/*.md ---------- */
+function parseBook() {
+  const entries = [];
+  const files = readdirSync(BOOK_DIR).filter((f) => f.endsWith('.md')).sort();
+  for (const file of files) {
+    const text = readFileSync(join(BOOK_DIR, file), 'utf8');
+    const chapterTitle = (text.match(/^#\s*\d+\.\s*(.+)$/m) || [, file.replace(/\.md$/, '')])[1].trim();
+    const blocks = text.split(/^###\s+/m).slice(1);
+    for (const b of blocks) {
+      const m = b.match(/^(\d+)\.\s*(.+)$/m);
+      if (!m) continue;
+      const get = (label) => {
+        const r = b.match(new RegExp(`^-\\s*${label}：(.+)$`, 'm'));
+        return r ? r[1].trim() : '';
+      };
+      entries.push({
+        chapter: file,
+        chapterTitle,
+        index: parseInt(m[1], 10),
+        title: m[2].trim(),
+        cost: get('成本'),
+        plain: get('说人话'),
+        benefit: get('收益'),
+        grade: get('证据等级') || 'C',
+        source: get('来源'),
+        note: get('备注'),
+      });
+    }
+  }
+  return entries;
+}
+
+/* ---------- 2. 布局 ---------- */
+function layout({ title, desc, body, path = '/' }) {
+  return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>${esc(title)}</title>
+<meta name="description" content="${esc(desc)}">
+<link rel="canonical" href="${SITE}${path}">
+<style>
+:root{--bg:#faf9f7;--card:#fff;--ink:#2b2b28;--sub:#6b6b66;--line:#e8e4dc;--accent:#b3541e;--accent-bg:#fdf3ec;--green:#18794e;--green-bg:#eef7f1;--amber:#915930;--amber-bg:#fbf3e8;--red:#a33b2e;--red-bg:#fbeeec}
 *{margin:0;padding:0;box-sizing:border-box}
 body{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;background:var(--bg);color:var(--ink);line-height:1.75;font-size:16px}
 a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
@@ -80,120 +128,51 @@ table.wk td:first-child{white-space:nowrap;font-weight:600}
 .tag{display:inline-block;font-size:11.5px;padding:1px 8px;border-radius:6px;background:var(--green-bg);color:var(--green);white-space:nowrap}
 .tag.free{background:var(--accent-bg);color:var(--accent)}
 .tag.cn{background:#eef2fb;color:#3451b2}
+.tag.warn{background:var(--amber-bg);color:var(--amber)}
+.btn{display:inline-block;background:var(--accent);color:#fff;padding:6px 16px;border-radius:6px;font-size:13px;white-space:nowrap}
+.btn:hover{color:#fff;text-decoration:none;opacity:.92}
+.btn.ghost{background:#f3f0ea;color:var(--ink)}
+.update-line{font-size:12.5px;color:var(--sub);margin-bottom:12px}
+.update-line strong{color:var(--ink)}
+.warn{background:var(--amber-bg);border:1px solid var(--line);border-radius:8px;padding:10px 14px;font-size:13px;color:var(--amber);margin:12px 0}
+.change-item{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin-bottom:12px}
+.change-item .d{font-size:12.5px;color:var(--sub)}
+.change-item h3{font-size:15.5px;margin:4px 0 6px}
+.change-item p{font-size:13.5px;color:var(--sub)}
+.impact{display:inline-block;font-size:11px;padding:1px 8px;border-radius:20px;margin-left:6px;font-weight:600}
+.impact.high{background:var(--red-bg);color:var(--red)}
+.impact.mid{background:var(--amber-bg);color:var(--amber)}
 footer.site{border-top:1px solid var(--line);margin-top:40px;padding:26px 0 40px;color:var(--sub);font-size:13px}
-footer.site p{margin-bottom:6px}
+footer.site p{margin-bottom:8px}
 .crumb{font-size:13px;color:var(--sub);margin:18px 0 6px}
 .crumb a{color:var(--sub)}
-/* 条目页 / 章节页 */
-.article{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:26px 28px;margin:8px 0 22px}
-.article h1{font-size:24px;line-height:1.45;margin-bottom:14px}
-.article h1 .no{color:var(--sub);font-weight:400;margin-right:8px;font-size:19px}
-.article .plain{background:var(--accent-bg);border-left:3px solid var(--accent);padding:12px 16px;border-radius:0 8px 8px 0;font-size:15px;margin:14px 0 18px}
-.article .plain b{color:var(--accent)}
-.article .blk{margin-top:18px}
-.article .blk h2{font-size:14px;color:var(--sub);font-weight:600;letter-spacing:.02em;margin-bottom:6px}
-.article .blk p{font-size:15px}
-.article .blk .src{font-size:12.5px;color:var(--sub);word-break:break-all;line-height:1.85}
-.article .note{font-size:13.5px;color:var(--amber);background:var(--amber-bg);padding:10px 14px;border-radius:8px;margin-top:18px}
-.pager{display:flex;justify-content:space-between;gap:14px;font-size:14px;margin:6px 0 26px;flex-wrap:wrap}
-.pager a{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 16px;color:var(--ink)}
-.pager a:hover{border-color:var(--accent);text-decoration:none}
-.pager .sp{flex:1}
-.rel{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px 20px;margin-bottom:18px}
-.rel h2{font-size:15px;margin-bottom:12px}
-.rel ul{list-style:none;display:flex;flex-direction:column;gap:9px}
-.rel li{font-size:14.5px;line-height:1.55;padding-left:14px;position:relative}
-.rel li:before{content:"";position:absolute;left:0;top:.72em;width:5px;height:5px;border-radius:50%;background:var(--accent)}
-.rel li a{color:var(--ink)}
-.rel li a:hover{color:var(--accent)}
-.toc{list-style:none;display:flex;flex-direction:column;gap:7px;font-size:14.5px}
-.toc li{line-height:1.55}
-.toc .cn{color:var(--sub);font-size:12.5px;margin-left:6px}
-.chapblk{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px 20px;margin-bottom:14px}
-.chapblk h3{font-size:16px;margin-bottom:10px}
-.chapblk h3 a{color:var(--ink)}
-@media(max-width:560px){.hero h1{font-size:24px}.entry{padding:16px}.article{padding:20px 18px}.article h1{font-size:20px}}`;
-
-/* ---------- 1. 解析 book/*.md ---------- */
-function parseBook() {
-  const entries = [];
-  const chapters = [];
-  const files = readdirSync(BOOK_DIR).filter((f) => f.endsWith('.md')).sort();
-  for (const file of files) {
-    const text = readFileSync(join(BOOK_DIR, file), 'utf8');
-    const headMatch = text.match(/^#\s*(\d+)\.\s*(.+)$/m);
-    const chapterNum = headMatch ? parseInt(headMatch[1], 10) : parseInt((file.match(/^(\d+)/) || [, '0'])[1], 10);
-    const chapterTitle = headMatch ? headMatch[2].trim() : file.replace(/\.md$/, '');
-    const introMatch = text.match(/^#\s*\d+\.\s*.+\r?\n([\s\S]*?)(?=^###)/m);
-    const chapterIntro = introMatch ? introMatch[1].trim().split(/\r?\n\s*\r?\n/)[0].trim() : '';
-    const blocks = text.split(/^###\s+/m).slice(1);
-    for (const b of blocks) {
-      const m = b.match(/^(\d+)\.\s*(.+)$/m);
-      if (!m) continue;
-      const get = (label) => {
-        const r = b.match(new RegExp(`^-\\s*${label}：(.+)$`, 'm'));
-        return r ? r[1].trim() : '';
-      };
-      entries.push({
-        chapter: file,
-        chapterNum,
-        chapterTitle,
-        chapterIntro,
-        index: parseInt(m[1], 10),
-        title: m[2].trim(),
-        cost: get('成本'),
-        plain: get('说人话'),
-        benefit: get('收益'),
-        grade: get('证据等级') || 'C',
-        source: get('来源'),
-        note: get('备注'),
-      });
-    }
-    if (!chapters.find((c) => c.num === chapterNum)) {
-      chapters.push({ num: chapterNum, title: chapterTitle, intro: chapterIntro, file });
-    }
-  }
-  chapters.sort((a, b) => a.num - b.num);
-  return { entries, chapters };
-}
-
-/* ---------- 2. 布局 ---------- */
-function layout({ title, desc, body, path = '/', jsonld = '', robots = 'index,follow' }) {
-  return `<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>${esc(title)}</title>
-<meta name="description" content="${esc(desc)}">
-<meta name="robots" content="${robots}">
-<link rel="canonical" href="${SITE}${path}">
-<link rel="stylesheet" href="/assets/site.css">
-${jsonld ? `<script type="application/ld+json">${jsonld}</script>` : ''}
+@media(max-width:560px){.hero h1{font-size:24px}.entry{padding:16px}table.wk{font-size:13px}}
+</style>
 </head>
 <body>
 <header class="site"><div class="wrap">
-<a class="logo" href="/">🧰 羊毛工具箱 <span>wooltools.tech</span><small>WOOL TOOLS · 高性价比生活决策 + AI 工具免费额度情报</small></a>
+<a class="logo" href="/">🧰 羊毛工具箱 <span>wooltools.tech</span><small>WOOL TOOLS · 免费资源情报站（VPS / 域名 / AI 额度）</small></a>
 <nav class="top">
-<a href="/">首页</a><a href="/all/">全部目录</a><a href="/slice/shiye/">失业保障</a><a href="/slice/shengqian/">省钱</a><a href="/slice/chengxuyuan/">程序员红线</a><a href="/weekly/">额度情报</a><a href="/guide/">完整指南</a><a href="/about/">关于</a>
+<a href="/">首页</a><a href="/vps/">VPS免费</a><a href="/domains/">域名优惠</a><a href="/ai-free/">AI额度</a><a href="/weekly/">周报</a><a href="/guide/">指南</a><a href="/about/">关于</a>
 </nav>
 </div></header>
 <main class="wrap">
 ${body}
 </main>
 <footer class="site"><div class="wrap">
-<p>🧰 <strong>羊毛工具箱 wooltools.tech</strong> — 用最少的钱、时间和精力，换回最多的寿命、金钱和人身自由。</p>
-<p>指南数据来源：<a href="https://github.com/eternity4719/HowToLiveBetter" target="_blank" rel="noopener">eternity4719/HowToLiveBetter</a>（CC BY 4.0，署名转载再加工）。本站内容不构成医疗、法律建议，请以官方最新公布为准。</p>
+<p>🧰 <strong>羊毛工具箱 wooltools.tech</strong> — 薅羊毛，先看这三张表。免费政策每周核验，变更第一时间记录。</p>
+<p>💰 <strong>推荐链接披露</strong>：本站部分"立即注册 / 领取"按钮为推荐链接（affiliate link）。通过这些链接注册，商家会支付本站一笔佣金——<strong>你的价格不变</strong>，佣金由商家承担，用于维持本站的数据核验与更新。</p>
+<p>指南数据来源：<a href="https://github.com/eternity4719/HowToLiveBetter" target="_blank" rel="noopener">eternity4719/HowToLiveBetter</a>（CC BY 4.0，署名转载再加工）。本站内容不构成医疗、法律、投资建议；免费额度与价格以各商家官网实时公布为准。</p>
 </div></footer>
 </body>
 </html>`;
 }
 
-/* ---------- 3. 条目渲染 ---------- */
+/* ---------- 3. 条目渲染（book 内容，保留） ---------- */
 function renderEntry(e, no) {
   const g = e.grade === 'A' ? 'a' : e.grade === 'B' ? 'b' : 'c';
-  return `<article class="entry" id="e-${e.chapterNum}-${e.index}">
-<h3><span class="no">${no}.</span><a href="${entryUrl(e.chapterNum, e.index)}" style="color:inherit">${esc(e.title)}</a><span class="badge ${g}">证据 ${e.grade}</span></h3>
+  return `<article class="entry" id="e-${e.chapter.replace(/\.md$/, '')}-${e.index}">
+<h3><span class="no">${no}.</span>${esc(e.title)}<span class="badge ${g}">证据 ${e.grade}</span></h3>
 ${e.plain ? `<div class="plain">${esc(e.plain)}</div>` : ''}
 <dl>
 ${e.cost ? `<dt>成本</dt><dd>${esc(e.cost)}</dd>` : ''}
@@ -204,34 +183,39 @@ ${e.note ? `<div class="note">备注：${esc(e.note)}</div>` : ''}
 </article>`;
 }
 
-/* ---------- 4. 首页 ---------- */
-function buildIndex(entries, slices, weekly, chapters) {
+/* ---------- 4. 页面 ---------- */
+
+/** 首页：工具导向。book 内容降权为二级入口。 */
+function buildIndex(entries, slices, weekly, vps, domains, aiFree, changes) {
   const wk = weekly.weekly[0];
+  const toolCards = [
+    { href: '/vps/', emoji: '🖥️', h: 'VPS / 云免费试用对比', p: 'Vultr、Oracle、搬瓦工……免费额度、绑卡要求、推荐返佣一次看清。', meta: `更新 ${vps.updated} · ${vps.providers.length} 家` },
+    { href: '/domains/', emoji: '🌐', h: '域名首年价格追踪', p: '.com 首年价 + 续费价 + 哪家有返佣，一张表比完。', meta: `更新 ${domains.updated} · ${domains.registrars.length} 家注册商` },
+    { href: '/ai-free/', emoji: '🤖', h: 'AI API 免费额度', p: 'SiliconFlow、Groq、OpenRouter……免绑卡的额度都在这。', meta: `更新 ${aiFree.updated} · ${aiFree.apis.length} 个平台` },
+  ];
   const body = `
 <div class="hero">
-<h1>用最少的钱和时间<br>换回最多的寿命、金钱和自由</h1>
-<p>641 条循证生活决策（每条写明成本、收益、证据等级和官方出处）+ AI 工具免费额度情报周报。不灌鸡汤，只给能查证的清单。</p>
-<a class="cta" href="/slice/shiye/">失业了？先看能领什么 →</a>
+<h1>薅羊毛，先看这三张表</h1>
+<p>VPS 免费试用、域名首年价格、AI 免费额度——三张实时核验的对比表，每张都标注更新日期。免费政策一变，我们第一时间记录在「政策变更追踪」。</p>
 </div>
 
 <section>
-<h2 class="sec">📋 人生决策切片</h2>
-<p class="sec-desc">从 641 条指南里按场景切出来的长尾清单，手机直接看。</p>
+<h2 class="sec">🧰 免费资源查询工具</h2>
+<p class="sec-desc">本站核心：数据表，不是文章。收藏这三个页面就够了。</p>
 <div class="grid">
-${slices.map((s) => {
-  const n = countSlice(entries, s);
-  return `<a class="card" href="/slice/${s.slug}/"><h3>${esc(s.nav)}</h3><p>${esc(s.desc.slice(0, 52))}…</p><div class="meta">${n} 条 · 证据分级标注</div></a>`;
-}).join('\n')}
+${toolCards.map((c) => `<a class="card" href="${c.href}"><h3>${c.emoji} ${c.h}</h3><p>${c.p}</p><div class="meta">📅 ${c.meta}</div></a>`).join('\n')}
 </div>
 </section>
 
-<section>
-<h2 class="sec">📚 全部 34 个主题</h2>
-<p class="sec-desc">${entries.length} 条建议按主题分章，点进任何一条都能看到成本、收益和官方文件出处。</p>
-<div class="grid">
-${chapters.map((c) => `<a class="card" href="${chapterUrl(c.num)}"><h3>${c.num}. ${esc(c.title)}</h3><div class="meta">${entries.filter((e) => e.chapterNum === c.num).length} 条</div></a>`).join('\n')}
-</div>
-<p class="sec-desc" style="margin-top:14px"><a href="/all/">查看全部 ${entries.length} 条完整目录 →</a></p>
+<section id="changes">
+<h2 class="sec">⚠️ 政策变更追踪</h2>
+<p class="sec-desc">免费政策单方面变更是薅羊毛第一大风险。这里记录所有已知变更，按时间倒序。</p>
+${changes.changes.slice(0, 3).map((c) => `
+<div class="change-item">
+<div class="d">📅 ${esc(c.date)} · ${esc(c.vendor)}<span class="impact ${c.impact === '高' ? 'high' : 'mid'}">影响${esc(c.impact)}</span></div>
+<h3>${esc(c.title)}</h3>
+<p>${esc(c.detail)} <span class="tag ${c.evidence.includes('已验证') ? '' : 'warn'}">${esc(c.evidence)}</span></p>
+</div>`).join('\n')}
 </section>
 
 <section>
@@ -241,7 +225,7 @@ ${chapters.map((c) => `<a class="card" href="${chapterUrl(c.num)}"><h3>${c.num}.
 <tr><th>工具</th><th>额度</th><th>类型</th><th>状态</th></tr>
 ${wk.items.map((i) => `<tr><td><a href="${esc(i.link)}" target="_blank" rel="noopener">${esc(i.name)}</a></td><td>${esc(i.offer)}</td><td><span class="tag ${i.type === '国内直连' ? 'cn' : i.type === '免卡白嫖' ? 'free' : ''}">${esc(i.type)}</span></td><td>${esc(i.status)}</td></tr>`).join('\n')}
 </table>
-<p class="sec-desc" style="margin-top:12px"><a href="/weekly/">查看全部周报 →</a> ｜ <a href="/guide/">完整版 641 条指南检索 →</a></p>
+<p class="sec-desc" style="margin-top:12px"><a href="/weekly/">查看全部周报 →</a> ｜ <a href="/ai-free/">AI 免费额度对比表 →</a></p>
 </section>
 
 <section>
@@ -249,8 +233,21 @@ ${wk.items.map((i) => `<tr><td><a href="${esc(i.link)}" target="_blank" rel="noo
 <div class="grid">
 ${weekly.deals.map((d) => `<div class="card"><h3>${esc(d.item)}</h3><div class="meta">${esc(d.date)} · ${esc(d.status)}</div></div>`).join('\n')}
 </div>
+</section>
+
+<section>
+<h2 class="sec">📚 人生决策指南</h2>
+<p class="sec-desc">641 条循证生活决策（失业保障/省钱/租房/维权/程序员红线），每条写明成本、收益、证据等级。数据来源 HowToLiveBetter（CC BY 4.0）。</p>
+<div class="grid">
+<a class="card" href="/guide/"><h3>📖 完整指南 · 641 条检索版</h3><p>支持按成本/证据等级筛选和全文搜索。</p><div class="meta">book/ 34 章 · 镜像再加工</div></a>
+${slices.slice(0, 5).map((s) => {
+  const n = countSlice(entries, s);
+  return `<a class="card" href="/slice/${s.slug}/"><h3>${esc(s.nav)}</h3><p>${esc(s.desc.slice(0, 40))}…</p><div class="meta">${n} 条</div></a>`;
+}).join('\n')}
+</div>
+<p class="sec-desc" style="margin-top:12px">更多场景切片：${slices.slice(5).map((s) => `<a href="/slice/${s.slug}/">${esc(s.nav)}</a>`).join(' · ')}</p>
 </section>`;
-  writePage('index.html', { title: '羊毛工具箱 wooltools.tech — 高性价比生活决策 + AI 工具免费额度情报', desc: '641 条循证生活决策清单（失业保障/省钱/租房/维权/程序员红线）+ AI 工具免费额度情报周报。每条写明成本、收益、证据等级和官方出处。', body, path: '/' });
+  writePage('index.html', { title: '羊毛工具箱 wooltools.tech — VPS免费试用 · 域名优惠 · AI免费额度情报', desc: '免费资源情报站：VPS/云免费试用对比、域名首年价格追踪、AI API 免费额度表，每张表标注更新日期，政策变更第一时间追踪。', body, path: '/' });
 }
 
 function countSlice(entries, slice) {
@@ -262,7 +259,81 @@ function countSlice(entries, slice) {
   return n;
 }
 
-/* ---------- 5. 场景切片 ---------- */
+/** /vps/：VPS/云免费试用对比表（含推荐返佣说明） */
+function buildVps(vps) {
+  const body = `
+<!-- TODO: 替换为真实推荐链接（去 scripts/data/refs.json 填写你的 Vultr / 搬瓦工推荐 ID 后重新构建） -->
+<div class="crumb"><a href="/">首页</a> / VPS 免费试用对比</div>
+<section style="padding-top:8px">
+<h2 class="sec">🖥️ VPS / 云服务免费试用对比</h2>
+<p class="update-line">📅 <strong>数据更新日期：${esc(vps.updated)}</strong> · ${esc(vps.note)}</p>
+<table class="wk">
+<tr><th>服务商</th><th>免费/试用额度</th><th>绑卡要求</th><th>推荐返佣</th><th></th></tr>
+${vps.providers.map((p) => `
+<tr>
+<td>${p.emoji} ${esc(p.name)}<br>${p.tags.map((t) => `<span class="tag ${t.includes('无返佣') || t.includes('不可提现') || t.includes('结算难') ? 'warn' : t.includes('P0') ? 'free' : ''}">${esc(t)}</span>`).join(' ')}</td>
+<td>${esc(p.free_offer)}<br><span style="font-size:12px;color:var(--sub)">${esc(p.free_evidence)}</span></td>
+<td>${esc(p.card)}</td>
+<td style="font-size:13px">${esc(p.ref_desc)}<br><span style="font-size:12px;color:var(--sub)">${esc(p.ref_evidence)}</span></td>
+<td>${p.ref_key ? `<a class="btn" href="${esc(regLink(p))}" target="_blank" rel="noopener sponsored">立即注册</a>` : `<a class="btn ghost" href="${esc(regLink(p))}" target="_blank" rel="noopener">官网直达</a>`}</td>
+</tr>`).join('\n')}
+</table>
+<div class="warn">⚠️ 返佣说明：Vultr 约 $100/人需被推荐人活跃 30 天以上才结算；DigitalOcean / Hetzner 只给账户余额、不可提现。金额为调研整理，实时政策以官网为准。</div>
+<p class="sec-desc">看到政策变了？本站「<a href="/#changes">政策变更追踪</a>」会第一时间记录。推荐链接披露见页脚。</p>
+</section>`;
+  mkdirSync(join(DIST, 'vps'), { recursive: true });
+  writePage(join('vps', 'index.html'), { title: 'VPS/云免费试用对比 — 羊毛工具箱', desc: 'Vultr、Oracle Cloud、搬瓦工、DigitalOcean、Hetzner 免费试用额度与推荐返佣对比表，每周核验更新。', body, path: '/vps/' });
+}
+
+/** /domains/：域名首年价格追踪 */
+function buildDomains(domains) {
+  const body = `
+<!-- TODO: 替换为真实推荐链接（去 scripts/data/refs.json 填写你的 NameSilo / Namecheap 推荐 ID 后重新构建） -->
+<div class="crumb"><a href="/">首页</a> / 域名优惠追踪</div>
+<section style="padding-top:8px">
+<h2 class="sec">🌐 域名首年价格追踪 <span style="font-size:14px;color:var(--sub);font-weight:400">${esc(domains.tld)} 后缀</span></h2>
+<p class="update-line">📅 <strong>数据更新日期：${esc(domains.updated)}</strong> · ${esc(domains.note)}</p>
+<table class="wk">
+<tr><th>注册商</th><th>首年价</th><th>续费价</th><th>推荐返佣</th><th></th></tr>
+${domains.registrars.map((r) => `
+<tr>
+<td>${r.emoji} ${esc(r.name)}<br>${r.tags.map((t) => `<span class="tag ${t.includes('无返佣') ? 'warn' : t.includes('P0') ? 'free' : ''}">${esc(t)}</span>`).join(' ')}</td>
+<td>${esc(r.first_year)}</td>
+<td>${esc(r.renewal)}</td>
+<td style="font-size:13px">${esc(r.ref_desc)}<br><span style="font-size:12px;color:var(--sub)">${esc(r.ref_evidence)}</span></td>
+<td>${r.ref_key ? `<a class="btn" href="${esc(regLink(r))}" target="_blank" rel="noopener sponsored">立即注册</a>` : `<a class="btn ghost" href="${esc(regLink(r))}" target="_blank" rel="noopener">官网直达</a>`}</td>
+</tr>`).join('\n')}
+</table>
+<div class="warn">💡 选购建议：只图便宜续费选 Cloudflare（成本价）；想顺手赚返佣走 NameSilo（10%/单，cookie 1 年）。首年 $1.98 这类促销只适合尝鲜，续费价才是真实成本。</div>
+</section>`;
+  mkdirSync(join(DIST, 'domains'), { recursive: true });
+  writePage(join('domains', 'index.html'), { title: '域名首年价格追踪 — 羊毛工具箱', desc: '.com 首年价与续费价对比：Spaceship、Cloudflare、Porkbun、NameSilo、Namecheap，每周核验更新。', body, path: '/domains/' });
+}
+
+/** /ai-free/：AI API 免费额度表（无现金返佣，纯引流） */
+function buildAiFree(aiFree) {
+  const body = `
+<div class="crumb"><a href="/">首页</a> / AI 免费额度</div>
+<section style="padding-top:8px">
+<h2 class="sec">🤖 AI API 免费额度</h2>
+<p class="update-line">📅 <strong>数据更新日期：${esc(aiFree.updated)}</strong> · ${esc(aiFree.note)}</p>
+<table class="wk">
+<tr><th>平台</th><th>免费额度</th><th>绑卡</th><th>网络</th><th></th></tr>
+${aiFree.apis.map((a) => `
+<tr>
+<td>${a.emoji} ${esc(a.name)}<br>${a.tags.map((t) => `<span class="tag ${t.includes('无返佣') ? 'warn' : t === '国内直连' ? 'cn' : t === '免卡白嫖' ? 'free' : ''}">${esc(t)}</span>`).join(' ')}</td>
+<td>${esc(a.offer)}</td>
+<td>${esc(a.card)}</td>
+<td>${esc(a.region)}</td>
+<td><a class="btn ghost" href="${esc(a.site)}" target="_blank" rel="noopener">领取</a></td>
+</tr>`).join('\n')}
+</table>
+<p class="sec-desc" style="margin-top:12px">ℹ️ 经调研，AI API 类目前均无可验证的现金推荐返佣，本表为纯情报引流页。额度变化快，领用前请核对官网。</p>
+</section>`;
+  mkdirSync(join(DIST, 'ai-free'), { recursive: true });
+  writePage(join('ai-free', 'index.html'), { title: 'AI API 免费额度 — 羊毛工具箱', desc: 'SiliconFlow、Groq、OpenRouter、NVIDIA Build 等 AI 平台免费额度对比，每周核验更新。', body, path: '/ai-free/' });
+}
+
 function buildSlices(entries, slices) {
   for (const s of slices) {
     const picked = [];
@@ -281,150 +352,13 @@ function buildSlices(entries, slices) {
 <h2 class="sec">${esc(s.h1)}</h2>
 <p class="sec-desc">${esc(s.desc)}</p>
 ${picked.map((e, i) => renderEntry(e, i + 1)).join('\n')}
-<p class="sec-desc" style="margin-top:20px">数据来源：<a href="https://github.com/eternity4719/HowToLiveBetter" target="_blank" rel="noopener">HowToLiveBetter</a>（CC BY 4.0）。完整 641 条见 <a href="/guide/">完整指南</a> 或 <a href="/all/">全部目录</a>。</p>
+<p class="sec-desc" style="margin-top:20px">数据来源：<a href="https://github.com/eternity4719/HowToLiveBetter" target="_blank" rel="noopener">HowToLiveBetter</a>（CC BY 4.0）。完整 641 条见 <a href="/guide/">完整指南</a>。</p>
 </section>`;
     mkdirSync(join(DIST, 'slice', s.slug), { recursive: true });
     writePage(join('slice', s.slug, 'index.html'), { title: `${s.nav} — 羊毛工具箱`, desc: s.desc, body, path: `/slice/${s.slug}/` });
   }
 }
 
-/* ---------- 6. 章节页（34 个） ---------- */
-function buildChapters(entries, chapters, sliceMap) {
-  chapters.forEach((c, ci) => {
-    const list = entries.filter((e) => e.chapterNum === c.num).sort((a, b) => a.index - b.index);
-    const prev = chapters[ci - 1];
-    const next = chapters[ci + 1];
-    const desc = c.intro ? clip(c.intro, 118) : `第 ${c.num} 章：${c.title}，共 ${list.length} 条，每条写明成本、收益、证据等级与官方文件出处。`;
-    const body = `
-<div class="crumb"><a href="/">首页</a> / <a href="/all/">全部目录</a> / ${esc(c.title)}</div>
-<section style="padding-top:8px">
-<h2 class="sec">${c.num}. ${esc(c.title)}</h2>
-<p class="sec-desc">${esc(c.intro || desc)}</p>
-<p class="sec-desc">本章共 <strong>${list.length}</strong> 条。证据等级 A 表示有官方文件或权威统计支撑，B 表示有部分依据，C 表示经验性建议。点开任意一条可以看到完整依据。</p>
-${list.map((e, i) => renderEntry(e, i + 1)).join('\n')}
-</section>
-<div class="pager">
-${prev ? `<a href="${chapterUrl(prev.num)}">← ${prev.num}. ${esc(prev.title)}</a>` : '<span class="sp"></span>'}
-${next ? `<a href="${chapterUrl(next.num)}">${next.num}. ${esc(next.title)} →</a>` : '<span class="sp"></span>'}
-</div>`;
-    writePage(join('ch', String(c.num), 'index.html'), {
-      title: `${c.num}. ${c.title}（${list.length} 条）— 羊毛工具箱`,
-      desc,
-      body,
-      path: chapterUrl(c.num),
-      jsonld: JSON.stringify({
-        '@context': 'https://schema.org',
-        '@type': 'CollectionPage',
-        name: `${c.num}. ${c.title}`,
-        description: desc,
-        url: `${SITE}${chapterUrl(c.num)}`,
-        isPartOf: { '@type': 'WebSite', name: '羊毛工具箱', url: SITE + '/' },
-        inLanguage: 'zh-CN',
-      }),
-    });
-  });
-}
-
-/* ---------- 7. 条目页（641 个） ---------- */
-function buildEntries(entries, slices, chapterMap, sliceMap) {
-  // 按章节分组，用于"同主题其他条目"
-  const byChapter = new Map();
-  for (const e of entries) {
-    if (!byChapter.has(e.chapterNum)) byChapter.set(e.chapterNum, []);
-    byChapter.get(e.chapterNum).push(e);
-  }
-  for (const list of byChapter.values()) list.sort((a, b) => a.index - b.index);
-
-  for (const e of entries) {
-    const g = e.grade === 'A' ? 'a' : e.grade === 'B' ? 'b' : 'c';
-    const chap = chapterMap.get(e.chapterNum) || { num: e.chapterNum, title: e.chapterTitle };
-    const siblings = byChapter.get(e.chapterNum).filter((x) => x.index !== e.index);
-    // 相关条目：优先同章节相邻，最多 8 条
-    const near = siblings
-      .slice()
-      .sort((a, b) => Math.abs(a.index - e.index) - Math.abs(b.index - e.index))
-      .slice(0, 8)
-      .sort((a, b) => a.index - b.index);
-    const relSlices = sliceMap.get(`e:${e.chapterNum}-${e.index}`) || [];
-    const all = byChapter.get(e.chapterNum);
-    const pos = all.findIndex((x) => x.index === e.index);
-    const prevE = all[pos - 1];
-    const nextE = all[pos + 1];
-
-    const desc = clip(e.plain || e.cost || e.title, 118);
-    const body = `
-<div class="crumb"><a href="/">首页</a> / <a href="/all/">全部目录</a> / <a href="${chapterUrl(chap.num)}">${esc(chap.title)}</a> / 第 ${e.index} 条</div>
-<article class="article">
-<h1><span class="no">${e.index}.</span>${esc(e.title)}<span class="badge ${g}">证据 ${e.grade}</span></h1>
-${e.plain ? `<div class="plain"><b>说人话：</b>${esc(e.plain)}</div>` : ''}
-${e.cost ? `<div class="blk"><h2>成本</h2><p>${esc(e.cost)}</p></div>` : ''}
-${e.benefit ? `<div class="blk"><h2>收益 / 怎么做</h2><p>${esc(e.benefit)}</p></div>` : ''}
-${e.source ? `<div class="blk"><h2>官方来源</h2><p class="src">${linkify(e.source)}</p></div>` : ''}
-${e.note ? `<div class="note"><strong>备注：</strong>${esc(e.note)}</div>` : ''}
-</article>
-<div class="pager">
-${prevE ? `<a href="${entryUrl(prevE.chapterNum, prevE.index)}">← 上一条</a>` : '<span class="sp"></span>'}
-${nextE ? `<a href="${entryUrl(nextE.chapterNum, nextE.index)}">下一条 →</a>` : '<span class="sp"></span>'}
-</div>
-${relSlices.length ? `<div class="rel"><h2>这条属于这些场景</h2><ul>${relSlices.map((s) => `<li><a href="/slice/${s.slug}/">${esc(s.nav)}</a></li>`).join('')}</ul></div>` : ''}
-${near.length ? `<div class="rel"><h2>${esc(chap.title)} · 其他条目</h2><ul>${near.map((x) => `<li><a href="${entryUrl(x.chapterNum, x.index)}">${esc(x.title)}</a></li>`).join('')}</ul></div>` : ''}
-<div class="rel"><h2>出处与说明</h2><ul><li>数据来自开源项目 <a href="https://github.com/eternity4719/HowToLiveBetter" target="_blank" rel="noopener">HowToLiveBetter</a>（CC BY 4.0），本站按原许可署名转载并再加工。</li><li>本站内容不构成医疗、法律、投资建议；政策金额、门槛以你所在地当年官方公布为准。</li></ul></div>`;
-
-    writePage(join('p', `${e.chapterNum}-${e.index}`, 'index.html'), {
-      title: `${e.title} — 羊毛工具箱`,
-      desc,
-      body,
-      path: entryUrl(e.chapterNum, e.index),
-      jsonld: JSON.stringify({
-        '@context': 'https://schema.org',
-        '@type': 'Article',
-        headline: e.title,
-        description: desc,
-        url: `${SITE}${entryUrl(e.chapterNum, e.index)}`,
-        inLanguage: 'zh-CN',
-        isPartOf: { '@type': 'WebSite', name: '羊毛工具箱', url: SITE + '/' },
-        about: chap.title,
-        citation: (e.source || '').split(/；/).slice(0, 3).join(' ').slice(0, 500),
-        publisher: { '@type': 'Organization', name: '羊毛工具箱', url: SITE + '/' },
-        breadcrumb: {
-          '@type': 'BreadcrumbList',
-          itemListElement: [
-            { '@type': 'ListItem', position: 1, name: '首页', item: SITE + '/' },
-            { '@type': 'ListItem', position: 2, name: chap.title, item: `${SITE}${chapterUrl(chap.num)}` },
-            { '@type': 'ListItem', position: 3, name: e.title },
-          ],
-        },
-      }),
-    });
-  }
-}
-
-/* ---------- 8. 全部目录 ---------- */
-function buildAllIndex(entries, chapters) {
-  const body = `
-<div class="crumb"><a href="/">首页</a> / 全部目录</div>
-<section style="padding-top:8px">
-<h2 class="sec">📚 全部 ${entries.length} 条 · 按主题分 ${chapters.length} 章</h2>
-<p class="sec-desc">每一条都可以单独打开，里面写了成本、收益、证据等级和官方文件出处。</p>
-${chapters.map((c) => {
-  const list = entries.filter((e) => e.chapterNum === c.num).sort((a, b) => a.index - b.index);
-  return `<div class="chapblk">
-<h3><a href="${chapterUrl(c.num)}">${c.num}. ${esc(c.title)}</a><span class="cn">${list.length} 条</span></h3>
-<ul class="toc">
-${list.map((e) => `<li><a href="${entryUrl(e.chapterNum, e.index)}">${e.index}. ${esc(e.title)}</a></li>`).join('\n')}
-</ul>
-</div>`;
-}).join('\n')}
-</section>`;
-  writePage(join('all', 'index.html'), {
-    title: `全部目录 · ${entries.length} 条生活决策 — 羊毛工具箱`,
-    desc: `${entries.length} 条循证生活决策完整目录，按 ${chapters.length} 个主题分章：失业保障、省钱、租房、维权、职业病、法律红线、程序员、创业、育儿、养老等。每条写明成本、收益、证据等级和官方出处。`,
-    body,
-    path: '/all/',
-  });
-}
-
-/* ---------- 9. 周报 / 指南 / 关于 ---------- */
 function buildWeekly(weekly) {
   const body = `
 <div class="crumb"><a href="/">首页</a> / 额度情报周报</div>
@@ -460,90 +394,51 @@ function buildAbout() {
 <section style="padding-top:8px">
 <h2 class="sec">关于羊毛工具箱</h2>
 <p class="sec-desc" style="font-size:15px;color:var(--ink)">
-<p><strong>wooltools.tech（羊毛工具箱）</strong>是一个「高性价比生活决策 + AI 工具免费额度情报」站点。</p>
-<p style="margin-top:10px">指南数据来自开源项目 <a href="https://github.com/eternity4719/HowToLiveBetter" target="_blank" rel="noopener">eternity4719/HowToLiveBetter</a>（56.9k★，CC BY 4.0 许可，署名转载再加工）。原项目的规矩我们照抄：只引期刊论文和官方文件，每条写明成本、收益、证据等级，不引二手转述。</p>
-<p style="margin-top:10px">额度情报由自动化情报系统每日采集、每周整理，状态栏标 ✅ 的是实测领到的。</p>
+<p><strong>wooltools.tech（羊毛工具箱）</strong>是一个免费资源情报站：VPS/云免费试用、域名优惠、AI 免费额度，三张对比表每周核验；免费政策一变，第一时间记入「政策变更追踪」。</p>
+<p style="margin-top:10px">指南数据来自开源项目 <a href="https://github.com/eternity4719/HowToLiveBetter" target="_blank" rel="noopener">eternity4719/HowToLiveBetter</a>（CC BY 4.0 许可，署名转载再加工）。原项目的规矩我们照抄：只引期刊论文和官方文件，每条写明成本、收益、证据等级，不引二手转述。</p>
+<p style="margin-top:10px">💰 <strong>推荐链接披露</strong>：本站部分注册按钮为推荐链接（affiliate link），通过它们注册商家会支付本站佣金，你的价格不变，佣金用于维持数据核验。</p>
 <p style="margin-top:10px">本站内容不构成医疗、法律、投资建议。政策金额以你所在地当年官方公布为准。</p>
 </section>`;
-  writePage(join('about', 'index.html'), { title: '关于 — 羊毛工具箱', desc: '羊毛工具箱是什么：高性价比生活决策 + AI 工具免费额度情报。', body, path: '/about/' });
+  writePage(join('about', 'index.html'), { title: '关于 — 羊毛工具箱', desc: '羊毛工具箱是什么：免费资源情报站（VPS/域名/AI 额度）+ 641 条循证生活决策。', body, path: '/about/' });
 }
 
-function writePage(relPath, { title, desc, body, path, jsonld = '', robots = 'index,follow' }) {
-  const html = layout({ title, desc, body, path, jsonld, robots });
+function writePage(relPath, { title, desc, body, path }) {
+  const html = layout({ title, desc, body, path });
   const full = join(DIST, relPath);
   mkdirSync(dirname(full), { recursive: true });
   writeFileSync(full, html, 'utf8');
 }
 
-/* ---------- 10. SEO ---------- */
-function buildSeo(entries, chapters, slices) {
-  const urls = [
-    '/',
-    '/all/',
-    '/weekly/',
-    '/guide/',
-    '/about/',
-    ...chapters.map((c) => chapterUrl(c.num)),
-    ...slices.map((s) => `/slice/${s.slug}/`),
-    ...entries.map((e) => entryUrl(e.chapterNum, e.index)),
-  ];
+/* ---------- 5. SEO ---------- */
+function buildSeo(slices) {
+  const urls = ['/', '/vps/', '/domains/', '/ai-free/', '/weekly/', '/guide/', '/about/', ...slices.map((s) => `/slice/${s.slug}/`)];
   writeFileSync(join(DIST, 'sitemap.xml'), `<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-${urls.map((u) => `<url><loc>${SITE}${u}</loc><lastmod>${TODAY}</lastmod><changefreq>${u === '/' || u === '/weekly/' ? 'daily' : 'monthly'}</changefreq></url>`).join('\n')}
+${urls.map((u) => `<url><loc>${SITE}${u}</loc><changefreq>weekly</changefreq></url>`).join('\n')}
 </urlset>`, 'utf8');
   writeFileSync(join(DIST, 'robots.txt'), `User-agent: *\nAllow: /\nSitemap: ${SITE}/sitemap.xml\n`, 'utf8');
-  return urls.length;
 }
 
 /* ---------- main ---------- */
-const { entries, chapters } = parseBook();
+const entries = parseBook();
 const slices = JSON.parse(readFileSync(join(__dirname, 'data', 'slices.json'), 'utf8')).slices;
 const weekly = JSON.parse(readFileSync(join(__dirname, 'data', 'weekly.json'), 'utf8'));
+const vps = JSON.parse(readFileSync(join(__dirname, 'data', 'vps.json'), 'utf8'));
+const domains = JSON.parse(readFileSync(join(__dirname, 'data', 'domains.json'), 'utf8'));
+const aiFree = JSON.parse(readFileSync(join(__dirname, 'data', 'ai-free.json'), 'utf8'));
+const changes = JSON.parse(readFileSync(join(__dirname, 'data', 'changes.json'), 'utf8'));
 
-const chapterMap = new Map(chapters.map((c) => [c.num, c]));
-
-// 建立 条目 → 场景切片 反查表
-const sliceMap = new Map();
-for (const s of slices) {
-  for (const ref of s.refs) {
-    const list = entries.filter((e) => e.chapter === ref.chapter);
-    const picked = ref.indexes && ref.indexes.length ? list.filter((e) => ref.indexes.includes(e.index)) : list;
-    for (const e of picked) {
-      const k = `e:${e.chapterNum}-${e.index}`;
-      if (!sliceMap.has(k)) sliceMap.set(k, []);
-      sliceMap.get(k).push({ slug: s.slug, nav: s.nav });
-    }
-  }
-}
-
-console.log(`解析条目: ${entries.length} 条 / ${chapters.length} 章 / ${slices.length} 个场景切片`);
-buildIndex(entries, slices, weekly, chapters);
+console.log(`解析条目: ${entries.length} 条 / ${new Set(entries.map((e) => e.chapter)).size} 章`);
+console.log(`推荐链接状态: ${Object.entries(refs).filter(([k]) => !k.startsWith('_')).map(([k, v]) => `${k}=${String(v).startsWith('YOUR_') ? '占位' : '已填'}`).join(', ')}`);
+buildIndex(entries, slices, weekly, vps, domains, aiFree, changes);
 buildSlices(entries, slices);
-buildChapters(entries, chapters, sliceMap);
-buildEntries(entries, slices, chapterMap, sliceMap);
-buildAllIndex(entries, chapters);
 buildWeekly(weekly);
+buildVps(vps);
+buildDomains(domains);
+buildAiFree(aiFree);
 buildGuide();
 buildAbout();
-const n = buildSeo(entries, chapters, slices);
-
-// 资产
-mkdirSync(join(DIST, 'assets'), { recursive: true });
-writeFileSync(join(DIST, 'assets', 'site.css'), SITE_CSS, 'utf8');
-
-// IndexNow / 百度站长 校验文件（必须能被公开访问，搜索引擎靠它认领站点）
-if (existsSync(join(__dirname, 'data', 'seo.json'))) {
-  const seo = JSON.parse(readFileSync(join(__dirname, 'data', 'seo.json'), 'utf8'));
-  if (seo.indexnowKey) {
-    writeFileSync(join(DIST, `${seo.indexnowKey}.txt`), seo.indexnowKey, 'utf8');
-    console.log(`IndexNow 密钥文件 → /${seo.indexnowKey}.txt`);
-  }
-  if (seo.baiduVerifyFile && seo.baiduVerifyBody) {
-    writeFileSync(join(DIST, seo.baiduVerifyFile), seo.baiduVerifyBody, 'utf8');
-    console.log(`百度校验文件 → /${seo.baiduVerifyFile}`);
-  }
-}
-
+buildSeo(slices);
 // public/（iframe 完整版）拷入 dist
 if (existsSync(join(ROOT, 'public'))) {
   for (const f of readdirSync(join(ROOT, 'public'))) {
@@ -553,5 +448,4 @@ if (existsSync(join(ROOT, 'public'))) {
 }
 // GitHub Pages 自定义域名
 writeFileSync(join(DIST, 'CNAME'), 'wooltools.tech\n', 'utf8');
-console.log(`sitemap 收录 ${n} 个 URL`);
 console.log(`生成完成 → ${DIST}`);
